@@ -1,206 +1,317 @@
-# Proyecto Final — Aceleración de Procesamiento de Imágenes con CUDA  
+# CUDA Image Processing — Detección de Bordes CPU vs GPU
+
 **Asignatura:** Sistemas Distribuidos  
-**Equipo:** Equipo Torrent  
-**Profesor:** Francisco Moo Mena  
+**Carrera:** Ingeniería de Software
+
+**Integrantes del equipo:**
+- Alan Baas Itza
+- Jesus Oswaldo Chan Uicab
+- JESUS EVERARDO JIMENEZ RIVERA
+- DANIEL MENDEZ SIERRA
+- BUNTAROU EMILIANO ORDUÑO HARA
+- ARANDRY AZAEL RABANALES ANDRADE
 
 ---
 
-## 1. Descripción general del proyecto
+## ¿Qué hace este proyecto?
 
-Este proyecto implementa un prototipo de **procesamiento de imágenes acelerado con GPU** usando **CUDA**, y compara su desempeño contra una versión secuencial en CPU.
+Este proyecto implementa un **pipeline de procesamiento digital de imágenes** enfocado en la **detección de bordes**, y lo ejecuta en paralelo de dos formas:
 
-El flujo implementado es:
+- **CPU:** procesamiento secuencial, un píxel a la vez.
+- **GPU (CUDA):** procesamiento masivamente paralelo, miles de píxeles al mismo tiempo.
 
-1. Filtro de suavizado (Blur 3x3)  
-2. Detección de bordes (Sobel)  
-3. Umbralización binaria (Threshold)
+El objetivo es medir y comparar el rendimiento de ambos enfoques: cuándo vale la pena paralelizar y cuánto se puede ganar.
 
-La salida se genera en dos versiones:
+### ¿Qué es la detección de bordes?
 
-- `cpu_out.pgm` (resultado por CPU)
-- `gpu_out.pgm` (resultado por GPU)
-
-Además, el programa reporta:
-
-- Tiempo CPU (ms)
-- Tiempo GPU (ms)
-- Speedup (CPU/GPU)
-- MAE (error promedio absoluto entre ambas salidas)
-
----
-
-## 2. Importancia y visión del proyecto
-
-## ¿Por qué es importante?
-Este proyecto demuestra una necesidad real en ingeniería: **procesar datos visuales de forma rápida y eficiente**.  
-Muchas aplicaciones actuales dependen de esto:
-
-- inspección industrial por visión
-- análisis de imágenes médicas
-- monitoreo urbano y seguridad
-- robótica y drones
-- automatización en tiempo casi real
-
+En procesamiento digital de imágenes, un **borde** es una zona donde el nivel de brillo de la imagen cambia abruptamente, lo que generalmente corresponde a los contornos de objetos. Detectar bordes es el primer paso en muchos sistemas de visión por computadora: reconocimiento de objetos, seguimiento de movimiento, inspección industrial, diagnóstico médico por imagen, etc.
 Cuando el volumen de datos crece (más resolución, más imágenes, más frecuencia), la CPU puede convertirse en cuello de botella. Aquí es donde la GPU ofrece ventajas claras gracias al paralelismo masivo.
+### Pipeline de procesamiento
 
-## Visión del proyecto
-La visión es construir una base técnica robusta para evolucionar hacia sistemas más avanzados:
+El programa aplica tres etapas en secuencia sobre cada imagen en escala de grises (formato PGM):
 
-- de imagen estática a video en tiempo real
-- de detección de bordes a segmentación inteligente
-- de ejecución local a despliegues híbridos (edge/cloud)
-- de un pipeline académico a una arquitectura aplicable en industria
-
-Este trabajo no solo busca “hacer correr CUDA”, sino **entender y medir** el impacto de usar cómputo paralelo en problemas prácticos.
-
----
-
-## 3. Requisitos del sistema
-
-## Hardware
-- GPU NVIDIA compatible con CUDA
-- Memoria suficiente para imágenes de prueba
-
-## Software
-- Windows + Visual Studio Community 2026 (con C++)
-- CUDA Toolkit instalado (incluye `nvcc`)
-- Driver NVIDIA actualizado
-- (Opcional) Python 3 para script de comparación
-
-## Verificación rápida del entorno
-En terminal (x64 Native Tools Command Prompt for VS 2026):
-
-```bat
-nvcc --version
-nvidia-smi
+```
+Imagen original
+      │
+      ▼
+┌─────────────────────────────────────────┐
+│  Etapa 1: Blur (suavizado 3×3)          │
+│  Promedia cada píxel con sus 8 vecinos  │
+│  → Reduce el ruido antes de derivar     │
+└─────────────────────────────────────────┘
+      │
+      ▼
+┌─────────────────────────────────────────┐
+│  Etapa 2: Sobel (detección de bordes)   │
+│  Aplica dos máscaras de convolución:    │
+│    Gx = gradiente horizontal            │
+│    Gy = gradiente vertical              │
+│    magnitud = sqrt(Gx² + Gy²)           │
+│  → Resalta zonas de cambio brusco       │
+└─────────────────────────────────────────┘
+      │
+      ▼
+┌─────────────────────────────────────────┐
+│  Etapa 3: Umbralización (Threshold)     │
+│  Si magnitud ≥ umbral → píxel blanco    │
+│  Si magnitud < umbral → píxel negro     │
+│  → Imagen binaria de bordes             │
+└─────────────────────────────────────────┘
+      │
+      ▼
+  Imagen de bordes detectados
 ```
 
-Si ambos comandos responden correctamente, el entorno está listo.
+Cada etapa se guarda por separado, tanto en la versión CPU como en la GPU.
 
 ---
 
-## 4. Estructura del proyecto
+## Estructura del proyecto
 
-```text
+```
 cuda-image-project/
-├─ include/
-│  ├─ image_io.hpp
-│  ├─ cpu_pipeline.hpp
-│  └─ gpu_pipeline.cuh
-├─ src/
-│  ├─ main.cu
-│  ├─ image_io.cpp
-│  ├─ cpu_pipeline.cpp
-│  ├─ gpu_pipeline.cu
-│  └─ timer.hpp
-├─ data/
-│  └─ input/
-│     └─ test.pgm
-├─ output/
-│  ├─ cpu_out.pgm
-│  └─ gpu_out.pgm
-├─ scripts/
-│  ��─ compare.py
-├─ Makefile
-└─ README.md
+├── include/
+│   ├── image_io.hpp        # Estructuras GrayImage y PipelineResult
+│   ├── cpu_pipeline.hpp    # Interfaz del pipeline CPU
+│   └── gpu_pipeline.cuh    # Interfaz del pipeline GPU (CUDA)
+├── src/
+│   ├── main.cu             # Punto de entrada, modo batch, reporte
+│   ├── image_io.cpp        # Lectura/escritura de archivos PGM
+│   ├── cpu_pipeline.cpp    # Blur + Sobel + Threshold en CPU
+│   ├── gpu_pipeline.cu     # Blur + Sobel + Threshold en GPU (shared memory)
+│   └── timer.hpp           # Temporizador de alta resolución
+├── scripts/
+│   └── compare.py          # Comparación CPU vs GPU (MAE, PSNR)
+├── data/
+│   └── input/              # Imágenes de entrada (.pgm)
+├── output/                 # Resultados generados automáticamente
+└── Makefile
 ```
 
 ---
 
-## 5. Compilación
+## Requisitos
 
-Desde la carpeta raíz del proyecto:
+| Componente | Versión mínima |
+|---|---|
+| GPU NVIDIA | Compute Capability 3.5+ |
+| CUDA Toolkit | 11.0+ |
+| Driver NVIDIA | Compatible con el toolkit |
+| Compilador C++ | g++ con C++17 (`std::filesystem`) |
+| Python (opcional) | 3.7+ para `compare.py` |
+|x64 Native Tools Command Prompt for VS|
 
-```bat
-nvcc -O2 -Iinclude src/main.cu src/image_io.cpp src/cpu_pipeline.cpp src/gpu_pipeline.cu -o cuda_image_app.exe
+
+Verificar instalación:
+```bash
+nvcc --version    # Debe mostrar versión del toolkit
+nvidia-smi        # Debe mostrar la GPU disponible
+```
+## Sitios utiles para conseguir recursos y convertirlos a pgm
+- https://convertio.co/es/jpg-pgm/
+- https://www.pexels.com/
+
+---
+
+## Instalación y compilación
+
+```bash
+# Clonar el repositorio
+git clone https://github.com/AlanBaasItza/cuda-image-project
+cd cuda-image-project
+
+# Compilar (genera el ejecutable cuda_image_app)
+make
 ```
 
-Si no hay errores, se generará:
+Si el sistema tiene una arquitectura de GPU específica, se puede indicar:
+```bash
+nvcc -O2 -std=c++17 -Iinclude -arch=sm_75 src/main.cu src/image_io.cpp src/cpu_pipeline.cpp src/gpu_pipeline.cu -o cuda_image_app
+```
 
-```text
-cuda_image_app.exe
+### Elegir el valor de `-arch`
+
+El argumento `-arch` de `nvcc` indica la arquitectura CUDA objetivo para tu GPU.  
+Para saber cuál debes usar, identifica primero la **compute capability** de tu tarjeta en la tabla oficial de NVIDIA:
+
+- https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html
+
+La regla es simple: la compute capability se traduce al formato `sm_XY`.
+
+Ejemplos comunes:
+
+- Compute Capability **8.9** → `-arch=sm_89`
+- Compute Capability **8.6** → `-arch=sm_86`
+- Compute Capability **7.5** → `-arch=sm_75`
+- Compute Capability **6.1** → `-arch=sm_61`
+
+Por ejemplo, si tu GPU es una **RTX 4070**, NVIDIA la clasifica con compute capability **8.9**, así que puedes compilar con:
+
+```bash
+nvcc -O2 -std=c++17 -Iinclude -arch=sm_89 src/main.cu src/image_io.cpp src/cpu_pipeline.cpp src/gpu_pipeline.cu -o cuda_image_app
+```
+
+(Si no estás seguro de tu GPU, puedes verificarla con: `nvidia-smi`)
+
+---
+
+## Uso
+
+### Modo imagen única
+
+Procesa un solo archivo `.pgm`:
+
+```bash
+./cuda_image_app <imagen.pgm> [threshold]
+```
+
+| Parámetro | Descripción | Valor por defecto |
+|---|---|---|
+| `<imagen.pgm>` | Ruta a la imagen de entrada en escala de grises | (requerido) |
+| `[threshold]` | Umbral de detección de bordes (0–255). Menor = más bordes detectados | `120` |
+
+**Ejemplo:**
+```bash
+./cuda_image_app data/input/test.pgm 120
+```
+
+**Ejemplo con umbral más sensible (detecta más bordes):**
+```bash
+./cuda_image_app data/input/test.pgm 60
+```
+
+### Modo batch (procesamiento por lotes)
+
+Procesa todas las imágenes `.pgm` de un directorio:
+
+```bash
+./cuda_image_app --batch <directorio> [threshold]
+```
+
+**Ejemplo:**
+```bash
+./cuda_image_app --batch data/input 120
+```
+
+Se mostrará una barra de progreso y al final un reporte comparativo completo.
+
+También disponible como atajo:
+```bash
+make batch
 ```
 
 ---
 
-## 6. Ejecución
+## Archivos de salida
 
-```bat
-cuda_image_app.exe data/input/test.pgm 120
+Por cada imagen procesada (llamémosla `foto`) se generan **6 archivos** en `output/`:
+
+| Archivo | Descripción |
+|---|---|
+| `foto_cpu_blur.pgm` | Imagen suavizada — etapa 1 CPU |
+| `foto_cpu_sobel.pgm` | Magnitud del gradiente Sobel — etapa 2 CPU |
+| `foto_cpu_final.pgm` | Bordes binarios (resultado final CPU) |
+| `foto_gpu_blur.pgm` | Imagen suavizada — etapa 1 GPU |
+| `foto_gpu_sobel.pgm` | Magnitud del gradiente Sobel — etapa 2 GPU |
+| `foto_gpu_final.pgm` | Bordes binarios (resultado final GPU) |
+
+Las imágenes PGM se pueden abrir con GIMP, IrfanView, o cualquier visor que soporte el formato.
+
+---
+
+## Reporte de rendimiento
+
+Al finalizar, el programa imprime una tabla como esta:
+
+```
+============================================================================
+  PERFORMANCE REPORT -- CPU vs GPU (CUDA Shared Memory)
+  ============================================================================
+  Image               Size        CPU (ms)  GPU (ms)  Speedup  MAE     
+  ----------------------------------------------------------------------------
+  pexels-dejana-popov 8192x6144      393.41    178.35     2.21x   0.325
+                                                       |****
+  pexels-felix-mitter 8192x1967      133.96     13.74     9.75x   0.145
+                                                       |*******************
+  pexels-myeong-rae-j 8192x5461      331.70     34.65     9.57x   0.121
+                                                       |*******************
+  test2               1536x2048       30.37      4.49     6.76x   0.078
+                                                       |*************
+  test3               3376x6000      149.01     16.28     9.15x   0.213
+                                                       |******************
+                                                       |***********
+  test5               8192x3955      253.29     25.20    10.05x   0.150
+                                                       |********************
+  test6               6079x8192      367.38     75.35     4.88x   0.247
+                                                       |*********
+  v2osk-1Z2niiBPg5A-u 7372x4392      244.18    113.34     2.15x   0.233
+                                                       |****
+  ----------------------------------------------------------------------------
+  TOTAL / AVG                       1920.85    464.55     4.13x
+  ============================================================================
+  Max speedup: 10.05x  |  Min: 2.15x
+  Total CPU: 1920.85 ms  |  GPU: 464.55 ms
+  ============================================================================
 ```
 
-Parámetros:
-
-- `data/input/test.pgm` → imagen de entrada en formato PGM (P5)
-- `120` → umbral (threshold), opcional (si no se indica, usa valor por defecto)
-
----
-
-## 7. Salidas esperadas
-
-Después de ejecutar, se deben generar:
-
-- `output/cpu_out.pgm`
-- `output/gpu_out.pgm`
-
-Y en consola se muestran métricas como:
-
-- CPU ms
-- GPU ms
-- Speedup
-- MAE CPU vs GPU
+- **Speedup** aparece en verde si la GPU es más rápida (>1×), en rojo si no.
+- La barra de asteriscos es proporcional al speedup para visualizarlo de un vistazo.
+- **MAE** (Mean Absolute Error) mide la diferencia entre la salida CPU y GPU; valores cercanos a 0 indican equivalencia numérica.
 
 ---
 
-## 8. Cómo validar funcionamiento correcto
+## Comparación con script Python
 
-Se considera funcionamiento correcto cuando:
+Para comparar un par específico:
+```bash
+python scripts/compare.py output/test_cpu_final.pgm output/test_gpu_final.pgm
+```
 
-1. El ejecutable corre sin errores.
-2. Se generan ambos archivos de salida en `output/`.
-3. Se imprimen tiempos y speedup en consola.
-4. El MAE es bajo (salidas similares entre CPU y GPU).
+Para comparar automáticamente todos los pares en `output/`:
+```bash
+python scripts/compare.py --dir output
+```
 
-Validación opcional con Python:
+Salida de ejemplo:
+```
+  ──────────────────────────────────────────────────
+  Imagen : test  (512×512  262,144 px)
+  CPU    : output/test_cpu_final.pgm
+  GPU    : output/test_gpu_final.pgm
 
-```bat
-python scripts/compare.py output/cpu_out.pgm output/gpu_out.pgm
+  MAE    :  0.0000  [                    ]
+  PSNR   :    ∞ dB  (salidas idénticas)
+  Estado : ✓ Idénticas
 ```
 
 ---
 
-## 9. Interpretación de resultados
+## Detalle técnico: optimización con memoria compartida
 
-## Speedup
-Se calcula como:
+La versión GPU usa **shared memory** (memoria compartida por hilos dentro de un bloque CUDA), lo que reduce significativamente los accesos a memoria global.
 
-```text
-Speedup = Tiempo_CPU / Tiempo_GPU
+### Sin shared memory (versión original)
+Cada hilo lee los 9 píxeles vecinos directamente de memoria global. Para una imagen de 512×512 con bloques de 16×16, eso significa que cada píxel es leído hasta **9 veces** desde memoria global (latencia ~600 ciclos).
+
+### Con shared memory (versión actual)
+Cada bloque carga primero un **tile de (16+2)×(16+2) = 324 píxeles** en shared memory (latencia ~4 ciclos), luego los 256 hilos del bloque hacen sus cálculos de blur o Sobel completamente desde ahí.
+
+```
+Memoria global   →  [tile en shared memory]  →  cálculo por hilo
+ (lenta, 1 vez)        (rápida, muchas veces)
 ```
 
-- `> 1` significa que GPU fue más rápida
-- mientras mayor sea, mejor ganancia de rendimiento
-
-## MAE (Error Promedio Absoluto)
-Mide diferencia promedio entre salida CPU y GPU:
-
-- cercano a `0` = resultados muy parecidos
-- un valor pequeño es esperable por detalles numéricos
+Esto reduce los accesos a memoria global en aproximadamente **8×** para los kernels de convolución.
 
 ---
 
-## 10. Buenas prácticas de pruebas
+## Formato de imagen soportado
 
-Para un análisis más sólido:
+El proyecto trabaja con imágenes en formato **PGM binario (P5)**:
+- Un canal (escala de grises), 8 bits por píxel (0–255).
+- Se pueden convertir imágenes desde otros formatos con ImageMagick:
 
-- Probar distintos umbrales (ej. 80, 120, 160)
-- Repetir varias veces y promediar tiempos
-- Probar imágenes con diferentes tamaños/resoluciones
-- Registrar resultados en tabla para el reporte final
-
----
-
-## 11. Problemas comunes y solución
+## Problemas comunes y solución
 
 ## `nvcc` no reconocido
 - Verificar instalación de CUDA Toolkit
@@ -216,37 +327,3 @@ Para un análisis más sólido:
 ## MAE muy alto
 - Revisar implementación de kernels y bordes
 - Verificar umbral y consistencia en CPU/GPU
-
----
-
-## 12. Alcance actual y mejoras futuras
-
-## Alcance actual
-- Pipeline base de procesamiento de imagen
-- Comparación de rendimiento CPU vs GPU
-- Validación cuantitativa con MAE
-
-## Mejoras futuras
-- Guardar etapas intermedias (blur, sobel, threshold)
-- Optimización con memoria compartida en CUDA
-- Procesamiento por lotes y/o video
-- Interfaz gráfica para pruebas
-- Integración con casos de uso reales (industrial, médico, monitoreo)
-
----
-
-## 13. Créditos del equipo
-
-- ALAN RUBEN BAAS ITZA  
-- Jesus Oswaldo Chan Uicab  
-- JESUS EVERARDO JIMENEZ RIVERA  
-- DANIEL MENDEZ SIERRA  
-- BUNTAROU EMILIANO ORDUÑO HARA  
-- ARANDRY AZAEL RABANALES ANDRADE  
-
----
-
-## 14. Conclusión
-
-Este proyecto establece una base funcional y medible para aplicar cómputo paralelo con CUDA a un problema práctico de visión computacional.  
-Su principal aporte es demostrar, con evidencia de ejecución, que la aceleración por
