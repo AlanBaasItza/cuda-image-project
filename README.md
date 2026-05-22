@@ -13,6 +13,8 @@
 
 ---
 
+Video demostrativo del uso de este proyecto: https://drive.google.com/file/d/1yA-_M2DAR-2BObyQ1KwH5-XuIHU_sNzE/view?usp=drive_link
+---
 ## ¿Qué hace este proyecto?
 
 Este proyecto implementa un **pipeline de procesamiento digital de imágenes** enfocado en la **detección de bordes**, y lo ejecuta en paralelo de dos formas:
